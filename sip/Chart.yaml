@@ -1,0 +1,9 @@
+apiVersion: v2
+name: livekit-sip
+description: Real-time infrastructure for developers. LiveKit is the open source stack for streaming audio, video, and data.
+type: application
+version: 0.9.0
+appVersion: "v1.3.0"
+
+sources:
+  - https://github.com/livekit/sip

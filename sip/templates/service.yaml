@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "livekit-sip.fullname" . }}
+  labels:
+    {{- include "livekit-sip.labels" . | nindent 4 }}
+  annotations:
+  {{- if eq .Values.loadBalancer.type "aws" }}
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: http
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+  {{- else if or (eq .Values.loadBalancer.type "gke") (eq .Values.loadBalancer.type "gke-managed-cert") (eq .Values.loadBalancer.type "gke-vpc-native") }}
+    cloud.google.com/backend-config: '{"ports": {"{{ .Values.loadBalancer.servicePort }}":"{{ include "livekit-sip.fullname" . }}"}}'
+  {{- else if eq .Values.loadBalancer.type "gclb" }}
+    cloud.google.com/backend-config: '{"ports": {"{{ .Values.loadBalancer.servicePort }}":"{{ include "livekit-sip.fullname" . }}"}}'
+    cloud.google.com/neg: '{"exposed_ports": {"{{ .Values.loadBalancer.servicePort }}":{}}}'
+  {{- end }}
+  {{- if eq .Values.loadBalancer.type "gke-vpc-native" }}
+    cloud.google.com/neg: '{"ingress": true}'
+  {{- end }}
+  {{- if .Values.loadBalancer.annotations }}
+    {{- toYaml .Values.loadBalancer.annotations | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if or (eq .Values.loadBalancer.type "alb") (eq .Values.loadBalancer.type "gke") (eq .Values.loadBalancer.type "gke-managed-cert") (eq .Values.loadBalancer.type "do") (eq .Values.loadBalancer.type "gclb")}}
+  type: NodePort
+  {{- else if or (eq .Values.loadBalancer.type "aws") (eq .Values.loadBalancer.type "LoadBalancer") }}
+  type: LoadBalancer
+  {{- end }}
+  ports:
+    - port: {{ .Values.loadBalancer.servicePort }}
+      targetPort: sip-udp
+      protocol: UDP
+      name: sip-udp
+    - port: {{ .Values.loadBalancer.servicePort }}
+      targetPort: sip-tcp
+      protocol: TCP
+      name: sip-tcp
+    {{- $tlsListenPort := (include "livekit-sip.listenPortTLS" .) -}}
+    {{- if $tlsListenPort }}
+    - port: {{ $tlsListenPort }}
+      targetPort: tls-tcp
+      protocol: TCP
+      name: sip-tls
+    {{- end }}
+  selector:
+    {{- include "livekit-sip.selectorLabels" . | nindent 4 }}
+  {{- if .Values.loadBalancer.extraConfig }}
+  {{- toYaml .Values.loadBalancer.extraConfig | nindent 2 }}
+  {{- end }}

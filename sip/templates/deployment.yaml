@@ -1,0 +1,147 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "livekit-sip.fullname" . }}
+  labels:
+    {{- include "livekit-sip.labels" . | nindent 4 }}
+  {{- if .Values.deploymentAnnotations }}
+  annotations:
+    {{- toYaml .Values.deploymentAnnotations | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "livekit-sip.selectorLabels" . | nindent 6 }}
+  {{- if .Values.deploymentStrategy }}
+  strategy:
+    {{- toYaml .Values.deploymentStrategy | nindent 4 }}
+  {{- end }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        {{- include "livekit-sip.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "livekit-sip.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.podHostNetwork }}
+      dnsPolicy: ClusterFirstWithHostNet
+      hostNetwork: true
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: []
+          env:
+            - name: SIP_CONFIG_BODY
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "livekit-sip.fullname" . }}-config
+                  key: config.yaml
+            {{- if .Values.secrets.api.enabled }}
+            - name: LIVEKIT_API_KEY
+              value: {{ .Values.livekit.api_key }}
+            - name: LIVEKIT_API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  key: {{ .Values.secrets.api.apiSecretPropertyName }}
+                  name: {{ .Values.secrets.api.existingSecret }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: sip-udp
+              containerPort: {{ include "livekit-sip.listenPortSIP" . }}
+              {{- if .Values.podHostNetwork }}
+              hostPort: {{ include "livekit-sip.listenPortSIP" . }}
+              {{- end }}
+              protocol: UDP
+            - name: sip-tcp
+              containerPort: {{ include "livekit-sip.listenPortSIP" . }}
+              {{- if .Values.podHostNetwork }}
+              hostPort: {{ include "livekit-sip.listenPortSIP" . }}
+              {{- end }}
+              protocol: TCP
+            {{- $tlsListenPort := (include "livekit-sip.listenPortTLS" .) -}}
+            {{- if $tlsListenPort }}
+            - name: tls-tcp
+              containerPort: {{ $tlsListenPort }}
+              {{- if .Values.podHostNetwork }}
+              hostPort: {{ $tlsListenPort }}
+              {{- end }}
+              protocol: TCP
+            {{- end }}
+            {{- if .Values.livekit.health_port }}
+            - name: health
+              containerPort: {{ .Values.livekit.health_port }}
+              {{- if .Values.podHostNetwork }}
+              hostPort: {{ .Values.livekit.health_port }}
+              {{- end }}
+              protocol: TCP
+            {{- end }}
+            {{- if .Values.livekit.prometheus_port }}
+            - name: metrics
+              containerPort: {{ .Values.livekit.prometheus_port }}
+              {{- if .Values.podHostNetwork }}
+              hostPort: {{ .Values.livekit.prometheus_port }}
+              {{- end }}
+              protocol: TCP
+            {{- end }}
+          {{- if .Values.livekit.health_port }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+          {{- end }}
+          {{- if .Values.secrets.tlscert.enabled }}
+          {{- $certConf := (mustFirst .Values.livekit.tls.certs) }}
+          volumeMounts:
+            - mountPath: {{ $certConf.cert_file }}
+              subPath: {{ .Values.secrets.tlscert.certPropertyName }}
+              name: tlscert-volume
+            - mountPath: {{ $certConf.key_file }}
+              subPath: {{ .Values.secrets.tlscert.keyPropertyName }}
+              name: tlscert-volume
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.secrets.tlscert.enabled }}
+      volumes:
+        - name: tlscert-volume
+          secret:
+            defaultMode: 0600
+            secretName: {{ .Values.secrets.tlscert.existingSecret }}
+      {{- end }}
